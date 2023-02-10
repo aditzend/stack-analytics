@@ -1,0 +1,215 @@
+# Servicios comunes para Bots y Analytics
+# stack-common.yml V3.3.1
+
+version: '3.8'
+
+networks:
+  public:
+  dbinterface:
+  cms:
+  ingress:
+    external: true
+    name: traefik_net
+  
+volumes:
+  mongo_data:
+  cms_data:
+  filebrowser_data:
+  rasa_shared_actions_data:
+  call_recordings:
+  rabbitmq_data:
+  redis_data:
+
+services:
+  ingestor:
+    image: ${ANALYTICS_INGESTOR_IMAGE-alexanderditzend/analytics_ingestor:0.0.1}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    environment:
+      - CALL_RECORDINGS_PATH=/call_recordings
+      - PROCESSED_PATH=/call_recordings/processed
+      - ERROR_PATH=/call_recordings/failed
+      - SPLIT_PATH=/call_recordings/split
+      - NLP_PATH=/call_recordings/nlp
+      - DEFAULT_ASR_PROVIDER=WHISPER
+      - DEFAULT_ASR_LANGUAGE=es
+      - DBINTERFACE_URL=http://192.168.43.170:30040
+      - ANALYTICS_DBINTERFACE_URL=http://192.168.43.170:30041
+      - ANALYTICS_MANAGER_URL=http://manager:4000
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_TRANSCRIPT_EXCHANGE=asr 
+      - RABBITMQ_ALL_FINISHED_EXCHANGE=analytics
+      - RABBITMQ_ALL_FINISHED_QUEUE=all-finished
+    networks:
+      - public
+    volumes:
+      - call_recordings:/call_recordings
+
+  manager:
+    image: ${ANALYTICS_MANAGER_IMAGE-alexanderditzend/analytics_manager:0.0.1}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    networks:
+      - public
+    ports:
+      - "${ANALYTICS_MANAGER_PORT-30042}:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=development
+      - RABBITMQ_URL=amqp://192.168.43.170:30072
+      - DBAPI_URL=http://dbinterface:4000
+      - MONGO_URL=mongodb://mongo:27017/analytics
+      
+
+  modeller:
+    image: ${ANALYTICS_MODELLER_IMAGE-alexanderditzend/analytics_modeller:1.0.0}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    networks:
+      - public
+    ports:
+      - "${ANALYTICS_MODELLER_PORT-2324}:3000"
+    environment:
+      - PORT=3000
+      - ROOT_URL=${ANALYTICS_MODELLER_PROTOCOL-http}://${IP-192.168.43.170}
+      - MONGO_URL=${ANALYTICS_MODELLER_MONGO_URL-mongodb://mongo:27017/analytics}
+      
+  mongo:
+  image: ${MONGO_IMAGE-mongo}
+  deploy:
+    placement:
+      constraints:
+        - node.labels.common == 1
+  networks:
+    - public
+  ports:
+    - ${STACK_CODE-300}17:27017
+  volumes:
+    - mongo_data:/data/db     
+
+
+#    # Context
+# DBINTERFACE_URL=http://localhost:4000
+# ANALYTICS_MANAGER_URL=http://localhost:4545
+
+# # Sentiment, Emotions, NER and POS
+# NLP_HOST=192.168.43.170
+# NLP_PORT=30080
+
+
+# # RabbitMQ
+# RABBITMQ_HOST=192.168.43.170
+# RABBITMQ_PORT=30072
+# RABBITMQ_TRANSCRIPT_EXCHANGE=asr
+# TRANSCRIPTION_FINISHED_QUEUE=transcription-finished
+# RABBITMQ_ALL_FINISHED_EXCHANGE=analytics
+# ALL_FINISHED_QUEUE=all-finished
+
+# # RASA
+# RASA_MODEL_1=usuarios
+# RASA_HOST_1=192.168.43.170
+# RASA_PORT_1=30000
+# RASA_MODEL_2=agentes
+# RASA_HOST_2=192.168.43.170
+# RASA_PORT_2=30001
+# RASA_LANGUAGE=es 
+  nlp:
+    image: ${ANALYTICS_NLP_IMAGE-alexanderditzend/analytics_nlp:0.0.1}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    networks:
+      - public
+    environment:
+      - DBINTERFACE_URL=http://192.168.43.170:30040
+      - ANALYTICS_DBINTERFACE_URL=http://192.168.43.170:30041
+      - ANALYTICS_MANAGER_URL=http://manager:4000
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_TRANSCRIPT_EXCHANGE=asr
+      - RABBITMQ_ALL_FINISHED_EXCHANGE=analytics
+      - ALL_FINISHED_QUEUE=all-finished
+      - TRANSCRIPTION_FINISHED_QUEUE=transcription-finished
+      - RASA_MODEL_1=usuarios
+      - RASA_HOST_1=10.30.12.17
+      - RASA_PORT_1=30000
+      - RASA_MODEL_2=agentes
+      - RASA_HOST_2=10.30.12.17
+      - RASA_PORT_2=30001
+      - RASA_LANGUAGE=es
+      - NLP_HOST=sentiment 
+      - NLP_PORT=8000
+      
+
+  sentiment:
+      image: ${ANALYTICS_SENTIMENT_IMAGE-alexanderditzend/analytics_sentiment:1.0.0}
+      deploy:
+        placement:
+          constraints:
+            - node.labels.common == 1
+      networks:
+        - public
+      ports:
+        - "${ANALYTICS_SENTIMENT_PORT-30080}:8000"
+        
+  filebrowser:
+    image: ${FILEBROWSER_IMAGE-hurlenko/filebrowser}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    #labels:
+     # com.docker.stack.service.path: ""
+      #traefik.enable: "true"
+      #traefik.http.routers.atenasf-router.rule: PathPrefix(`${STACK_NAME}`)
+      #traefik.http.middlewares.atenas-sp.stripprefix.prefixes: /${STACK_NAME}
+      #traefik.http.routers.atenas-router.middlewares: atenas-sp
+    #environment:
+      #FB_BASEURL: "/{{ index .Service.Labels `com.docker.stack.namespace`}}"
+    volumes:
+      #- rasa_data:/data/{{index .Service.Labels "com.docker.stack.namespace"}}_rasa_models
+      - rasa_shared_actions_data:/actions
+      - call_recordings:/call_recordings
+      #- rasa_dev_data:/data/{{index .Service.Labels "com.docker.stack.namespace"}}_rasa_dev_models
+      #- rasa_dev_actions_data:/data/{{index .Service.Labels "com.docker.stack.namespace"}}_rasa_dev_actions      
+      - filebrowser_data:/config
+    ports:
+      - "1212:8080"
+    networks:
+      - public
+      
+
+
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE-rabbitmq:3-management}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    ports:
+      - "${STACK_CODE-300}71:15672"
+      - "${STACK_CODE-300}72:5672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - public
+      
+  whisper:
+    image: ${WHISPER_IMAGE-alexanderditzend:whisper-gpu:0.0.1}
+    deploy:
+      placement:
+        constraints:
+          - node.labels.common == 1
+    volumes:
+      - call_recordings:/app/call_recordings
+    networks:
+      - public
+      
